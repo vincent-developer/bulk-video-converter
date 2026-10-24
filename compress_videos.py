@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Batch-compress video files in a directory using FFmpeg (CPU / libx265)."""
+"""Batch-compress video files in a directory using FFmpeg (CPU libx265 or NVIDIA NVENC)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from config import (
     OUTPUT_DIR,
     PRESET,
     TARGET_RESOLUTION,
+    USE_GPU,
     VIDEO_EXTENSIONS,
     X265_POOLS,
 )
@@ -96,17 +97,36 @@ def build_ffmpeg_cmd(input_path: Path, output_path: Path) -> list[str]:
         str(input_path),
         "-map_metadata",
         "0",
-        "-c:v",
-        "libx265",
-        "-crf",
-        CRF,
-        "-preset",
-        PRESET,
-        "-tag:v",
-        "hvc1",
     ]
-    if X265_POOLS and X265_POOLS > 0:
-        cmd.extend(["-x265-params", f"pools={int(X265_POOLS)}"])
+    if USE_GPU:
+        # NVIDIA NVENC: CRF config value is passed as -cq (same number).
+        cmd.extend(
+            [
+                "-c:v",
+                "hevc_nvenc",
+                "-preset",
+                "p6",
+                "-tune",
+                "hq",
+                "-cq",
+                CRF,
+            ]
+        )
+    else:
+        cmd.extend(
+            [
+                "-c:v",
+                "libx265",
+                "-crf",
+                CRF,
+                "-preset",
+                PRESET,
+            ]
+        )
+        if X265_POOLS and X265_POOLS > 0:
+            cmd.extend(["-x265-params", f"pools={int(X265_POOLS)}"])
+
+    cmd.extend(["-tag:v", "hvc1"])
     scale = SCALE_FILTERS[TARGET_RESOLUTION]
     if scale:
         cmd.extend(["-vf", scale])
@@ -255,7 +275,12 @@ def main() -> None:
     skipped = 0
     failed = 0
 
-    print(f"Found {total} video(s). Resolution={TARGET_RESOLUTION}, CRF={CRF}, preset={PRESET}")
+    if USE_GPU:
+        encoder_info = f"Encoder: hevc_nvenc (GPU), cq={CRF}, preset=p6, tune=hq"
+    else:
+        encoder_info = f"Encoder: libx265 (CPU), crf={CRF}, preset={PRESET}"
+    print(f"Found {total} video(s). Resolution={TARGET_RESOLUTION}")
+    print(encoder_info)
     print(f"Output directory: {output_dir}")
 
     for index, video in enumerate(videos, start=1):
